@@ -9,7 +9,7 @@ import vte
 
 apps = {"goagent": ['/usr/bin/env', 'python', './goagent/local/proxy.py'],
         "gsnova": ['./gsnova/gsnova'],
-        "shadowsocks": ['/usr/bin/env', 'python', './shadowsocks/shadowsocks/local.py'],
+        "shadowsocks": ['/usr/bin/env', 'python', './shadowsocks/local.py'],
         "ssh": ['./ssh/auto_ssh.sh']}
         
 logo_file = os.path.join(os.path.abspath(os.path.dirname(__file__)), "app.png")
