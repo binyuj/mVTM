@@ -37,6 +37,7 @@ except ImportError:
 
 import socket
 import select
+import threading
 import SocketServer
 import struct
 import os
@@ -94,7 +95,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 
     def handle(self):
         try:
-            self.encryptor = encrypt.Encryptor(KEY, METHOD)
+            self.encryptor = encrypt.Encryptor(self.server.key, self.server.method)
             sock = self.connection
             iv_len = self.encryptor.iv_len()
             if iv_len:
@@ -109,8 +110,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
                 addr = socket.inet_ntop(socket.AF_INET6,
                                         self.decrypt(self.rfile.read(16)))
             else:
-                # not support
-                logging.warn('addr_type not support')
+                # not supported
+                logging.warn('addr_type not supported, maybe wrong password')
                 return
             port = struct.unpack('>H', self.decrypt(self.rfile.read(2)))
             try:
@@ -125,12 +126,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
             logging.warn(e)
 
 def main():
-    global SERVER, PORT, KEY, METHOD, IPv6
- 
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s %(levelname)-8s %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S', filemode='a+')
-   
+
+
     version = ''
     try:
         import pkg_resources
@@ -142,7 +142,7 @@ def main():
     KEY = None
     METHOD = None
     IPv6 = False
- 
+
     config_path = utils.find_config()
     optlist, args = getopt.getopt(sys.argv[1:], 's:p:k:m:c:6')
     for key, value in optlist:
@@ -150,8 +150,13 @@ def main():
             config_path = value
 
     if config_path:
+        logging.info('loading config from %s' % config_path)
         with open(config_path, 'rb') as f:
-            config = json.load(f)
+            try:
+                config = json.load(f)
+            except ValueError as e:
+                logging.error('found an error in config.json: %s', e.message)
+                sys.exit(1)
         logging.info('loading config from %s' % config_path)
     else:
         config = {}
@@ -173,21 +178,32 @@ def main():
     PORT = config['server_port']
     KEY = config['password']
     METHOD = config.get('method', None)
+    PORTPASSWORD = config.get('port_password', None)
+    TIMEOUT = config.get('timeout', 600)
 
     if not KEY and not config_path:
         sys.exit('config not specified, please read https://github.com/clowwindy/shadowsocks')
 
     utils.check_config(config)
 
+    if PORTPASSWORD:
+        if PORT or KEY:
+            logging.warn('warning: port_password should not be used with server_port and password. server_port and password will be ignored')
+    else:
+        PORTPASSWORD = {}
+        PORTPASSWORD[str(PORT)] = KEY
+
     encrypt.init_table(KEY, METHOD)
     if IPv6:
         ThreadingTCPServer.address_family = socket.AF_INET6
-    try:
-        server = ThreadingTCPServer((SERVER, PORT), Socks5Server)
+    for port, key in PORTPASSWORD.items():
+        server = ThreadingTCPServer((SERVER, int(port)), Socks5Server)
+        server.key, server.method, server.timeout = key, METHOD, int(TIMEOUT)
         logging.info("starting server at %s:%d" % tuple(server.server_address[:2]))
-        server.serve_forever()
-    except socket.error, e:
-        logging.error(e)
+        threading.Thread(target=server.serve_forever).start()
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except socket.error, e:
+        logging.error(e)
